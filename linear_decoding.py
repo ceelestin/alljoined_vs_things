@@ -4,13 +4,15 @@ Segments EEG around Image stimulus onsets, extracts DINOv2 image
 embeddings as targets, and fits a Ridge regression at every timepoint.
 Evaluation metric: Pearson correlation between predicted and true features.
 
-Modular: number of subjects and images per subject are configurable.
+Requires:
+    pip install neuralset scikit-learn matplotlib torch
 
 Usage:
-    cd ~/marcel/brainai-alljoined/scratch/jarod
-    python -m alljoined.linear_decoding
-    python -m alljoined.linear_decoding --n_subjects 1 --n_images 5000
-    python -m alljoined.linear_decoding --n_subjects 5 --n_images 30000 --window_start -0.1 --window_duration 0.3
+    python linear_decoding.py --study_dir /path/to/studies --cache_dir /tmp/cache
+    python linear_decoding.py --study_dir /path/to/studies --cache_dir /tmp/cache \
+        --n_subjects 1 --n_images 2000
+    python linear_decoding.py --study_dir /path/to/studies --cache_dir /tmp/cache \
+        --n_subjects 5 --n_images 2000 --window_start -0.05 --window_duration 0.5
 """
 
 import argparse
@@ -40,15 +42,18 @@ def _patched_get_fname(path, subject, session, run):  # type: ignore[no-untyped-
 _xu2025.Xu2025._get_fname = _patched_get_fname  # type: ignore[assignment]
 # -----------------------------------------------------------
 
-STUDY_DIR = "/large_experiments/brainai/shared/studies/"
-PROJECT = "alljoined_2"
-CACHE = Path(f"/checkpoint/jarod/brainai/cache/{PROJECT}")
-CACHE.mkdir(parents=True, exist_ok=True)
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Per-timepoint linear decoding: EEG → DINOv2"
+    )
+    parser.add_argument(
+        "--study_dir", type=str, required=True,
+        help="Root directory containing the Xu2025 study data",
+    )
+    parser.add_argument(
+        "--cache_dir", type=str, required=True,
+        help="Directory for caching extracted features",
     )
     parser.add_argument(
         "--n_subjects", type=int, default=None,
@@ -59,12 +64,12 @@ def parse_args() -> argparse.Namespace:
         help="Max image trials per subject (default: all available)",
     )
     parser.add_argument(
-        "--window_start", type=float, default=-0.1,
-        help="Window start relative to stimulus onset in seconds (default: -0.1)",
+        "--window_start", type=float, default=-0.05,
+        help="Window start relative to stimulus onset in seconds (default: -0.05)",
     )
     parser.add_argument(
-        "--window_duration", type=float, default=0.3,
-        help="Total window length in seconds (default: 0.3)",
+        "--window_duration", type=float, default=0.5,
+        help="Total window length in seconds (default: 0.5)",
     )
     parser.add_argument(
         "--ridge_alpha", type=float, default=1.0,
@@ -79,8 +84,8 @@ def parse_args() -> argparse.Namespace:
         help="Random seed for train/test split (default: 42)",
     )
     parser.add_argument(
-        "--output_dir", type=str, default=None,
-        help="Directory to save figures (default: CACHE dir)",
+        "--output_dir", type=str, default="results",
+        help="Directory to save figures (default: results/)",
     )
     return parser.parse_args()
 
@@ -94,18 +99,18 @@ def pearson_r(y_pred: np.ndarray, y_true: np.ndarray) -> float:
     return float(np.nanmean(num / np.maximum(den, 1e-8)))
 
 
-def load_events(n_subjects: int | None) -> "pd.DataFrame":
+def load_events(study_dir: str, cache_dir: str, n_subjects: int | None) -> "pd.DataFrame":
     """Load the Xu2025 study events, optionally keeping only n_subjects."""
     study_cfg: dict = {
         "name": "Xu2025",
-        "path": STUDY_DIR,
+        "path": study_dir,
         "infra_timelines": {"cluster": None},
     }
     if n_subjects is not None:
         study_cfg["query"] = f"subject_index < {n_subjects}"
     loader = ns.StudyLoader(
         study=study_cfg,
-        infra={"backend": "Cached", "folder": str(CACHE)},
+        infra={"backend": "Cached", "folder": cache_dir},
     )
     return loader.build()
 
@@ -233,8 +238,11 @@ def plot_results(
 if __name__ == "__main__":
     args = parse_args()
 
+    cache_dir = args.cache_dir
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+
     # --- load events ---
-    events = load_events(args.n_subjects)
+    events = load_events(args.study_dir, cache_dir, args.n_subjects)
     print(f"Loaded {len(events)} events, {events['subject'].nunique()} subjects")
 
     # --- filter images per subject ---
@@ -243,7 +251,7 @@ if __name__ == "__main__":
     print(f"Image trials per subject:\n{img_per_subj.to_string()}")
 
     # --- extractors ---
-    cache_infra = MapInfra(folder=str(CACHE), cluster=None)
+    cache_infra = MapInfra(folder=cache_dir, cluster=None)
 
     eeg = ns.extractors.EegExtractor(
         frequency=100,
@@ -293,7 +301,7 @@ if __name__ == "__main__":
     # --- summary plot ---
     fig = plot_results(all_scores, times_arr, n_images=args.n_images)
 
-    out_dir = Path(args.output_dir) if args.output_dir else CACHE
+    out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     n_subj = len(all_scores)
     n_img_tag = f"_{args.n_images}img" if args.n_images else "_allimg"
