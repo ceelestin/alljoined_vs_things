@@ -1,0 +1,6 @@
+huggingface_hub # used to download the AllJoined-1.6M dataset
+matplotlib
+neuralhub
+neuralset
+scikit-learn
+torch
