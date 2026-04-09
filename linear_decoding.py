@@ -29,7 +29,7 @@ import neuralset as ns
 
 # ---- monkey-patch for neuralhub Xu2025._get_fname bug ----
 # iter_timelines yields subject as str, but _get_fname expects int.
-from neuralhub.internal import xu2025 as _xu2025
+# from neuralhub.internal import xu2025 as _xu2025
 
 _orig_get_fname = _xu2025.Xu2025._get_fname
 
